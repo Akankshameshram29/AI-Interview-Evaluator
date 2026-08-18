@@ -15,3 +15,13 @@ def login(email: str, password: str) -> dict:
     })
     resp.raise_for_status()
     return resp.json()
+
+def get_topics() -> list:
+    resp = requests.get(f"{BASE_URL}/topics")
+    resp.raise_for_status()
+    return resp.json()
+
+def get_questions(topic_id: int) -> list:
+    resp = requests.get(f"{BASE_URL}/topics/{topic_id}/questions")
+    resp.raise_for_status()
+    return resp.json()
