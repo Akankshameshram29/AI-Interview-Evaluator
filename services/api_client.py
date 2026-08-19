@@ -1,6 +1,12 @@
 import requests
+from services.auth import get_token
+
 
 BASE_URL = "http://localhost:8000"
+
+def _auth_headers() -> dict:
+    token = get_token()
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 def register(email: str, password: str, name: str) -> dict:
     resp = requests.post(f"{BASE_URL}/auth/register", json={
@@ -23,5 +29,21 @@ def get_topics() -> list:
 
 def get_questions(topic_id: int) -> list:
     resp = requests.get(f"{BASE_URL}/topics/{topic_id}/questions")
+    resp.raise_for_status()
+    return resp.json()
+
+def submit_evaluation(topic_id: int, question_text: str, answer_text: str,
+                       answer_mode: str, source: str) -> dict:
+    resp = requests.post(
+        f"{BASE_URL}/practice/evaluate",
+        json={
+            "topic_id": topic_id,
+            "question_text": question_text,
+            "answer_text": answer_text,
+            "answer_mode": answer_mode,
+            "source": source,
+        },
+        headers=_auth_headers(),
+    )
     resp.raise_for_status()
     return resp.json()

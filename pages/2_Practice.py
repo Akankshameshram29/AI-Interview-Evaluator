@@ -1,6 +1,8 @@
 import streamlit as st
 from services.auth import require_login
 from services.api_client import get_topics, get_questions
+from services.api_client import submit_evaluation
+
 
 require_login()
 
@@ -54,3 +56,55 @@ if "selected_question" in st.session_state:
     st.caption(f"Source: {st.session_state.get('question_source')}")
 else:
     st.info("Pick a suggested question or write your own to continue.")
+
+
+
+st.divider()
+
+if "selected_question" in st.session_state:
+    st.subheader("Your Answer")
+
+    answer_mode = st.radio(
+        "Answer mode",
+        options=["Text", "Voice"],
+        horizontal=True,
+    )
+
+    if answer_mode == "Voice":
+        st.info("Voice mode coming Day 5 — recording and transcription not yet available.")
+        st.button("🎙️ Record", disabled=True)
+        answer_text = ""
+    else:
+        answer_text = st.text_area(
+            "Type your answer here",
+            height=200,
+            key="answer_text_input",
+        )
+
+    evaluate_clicked = st.button(
+        "Evaluate Answer",
+        disabled=(answer_mode == "Voice" or not answer_text.strip()),
+    )
+
+    if evaluate_clicked:
+        with st.spinner("Evaluating your answer..."):
+            result = submit_evaluation(
+                topic_id=selected_topic["id"],
+                question_text=st.session_state["selected_question"],
+                answer_text=answer_text.strip(),
+                answer_mode="text",
+                source=st.session_state.get("question_source", "custom"),
+            )
+        st.session_state["last_evaluation"] = result
+        st.success("Evaluation complete!")
+
+# --- Show result if one exists ---
+if "last_evaluation" in st.session_state:
+    st.divider()
+    st.subheader("Result (stub)")
+    result = st.session_state["last_evaluation"]
+    st.metric("Overall Score", f"{result['overall_score']} / 100")
+    for dim in result["dimension_scores"]:
+        st.write(f"**{dim['dimension'].capitalize()}**: {dim['score']} / 100")
+    st.write("**Feedback:**")
+    st.json(result["feedback"])

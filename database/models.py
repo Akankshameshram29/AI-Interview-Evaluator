@@ -31,3 +31,29 @@ class SuggestedQuestion(Base):
     expected_concepts = Column(JSON)  # list of strings, e.g. ["overfitting", "bias-variance tradeoff"]
 
     topic = relationship("Topic", back_populates="questions")
+
+class PracticeAttempt(Base):
+    __tablename__ = "practice_attempts"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=False)
+    question_text = Column(Text, nullable=False)
+    answer_mode = Column(String(20))   # 'text' or 'voice'
+    answer_text = Column(Text)
+    source = Column(String(20))         # 'suggested' or 'custom'
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    evaluation = relationship("Evaluation", back_populates="attempt", uselist=False)
+
+
+class Evaluation(Base):
+    __tablename__ = "evaluations"
+    id = Column(Integer, primary_key=True, index=True)
+    attempt_id = Column(Integer, ForeignKey("practice_attempts.id"), nullable=False)
+    evaluator_version = Column(String(50))
+    overall_score = Column(Integer)     # 0-100, simple int for now
+    dimension_scores = Column(JSON)     # e.g. {"correctness": 70, "completeness": 60}
+    feedback = Column(JSON)             # structured feedback object
+    latency_ms = Column(Integer)
+
+    attempt = relationship("PracticeAttempt", back_populates="evaluation")
