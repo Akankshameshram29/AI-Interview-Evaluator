@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from config.settings import settings
 from database.connection import get_db
 from database.models import User
-
+from jose import jwt, JWTError
 
 
 def hash_password(password: str) -> str:

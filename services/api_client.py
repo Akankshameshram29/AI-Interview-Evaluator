@@ -32,8 +32,14 @@ def get_questions(topic_id: int) -> list:
     resp.raise_for_status()
     return resp.json()
 
-def submit_evaluation(topic_id: int, question_text: str, answer_text: str,
-                       answer_mode: str, source: str) -> dict:
+def submit_evaluation(
+    topic_id: int,
+    question_text: str,
+    answer_text: str,
+    answer_mode: str,
+    source: str,
+    transcription_id: str | None = None,
+) -> dict:
     resp = requests.post(
         f"{BASE_URL}/practice/evaluate",
         json={
@@ -42,7 +48,19 @@ def submit_evaluation(topic_id: int, question_text: str, answer_text: str,
             "answer_text": answer_text,
             "answer_mode": answer_mode,
             "source": source,
+            "transcription_id": transcription_id,
         },
+        headers=_auth_headers(),
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def transcribe_audio(audio_bytes: bytes, filename: str = "recording.wav") -> dict:
+    files = {"audio": (filename, audio_bytes, "audio/wav")}
+    resp = requests.post(
+        f"{BASE_URL}/practice/transcribe",
+        files=files,
         headers=_auth_headers(),
     )
     resp.raise_for_status()

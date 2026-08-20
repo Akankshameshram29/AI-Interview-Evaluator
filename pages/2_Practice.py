@@ -1,7 +1,7 @@
 import streamlit as st
 from services.auth import require_login
 from services.api_client import get_topics, get_questions
-from services.api_client import submit_evaluation
+from services.api_client import submit_evaluation, transcribe_audio
 
 
 require_login()
@@ -68,22 +68,55 @@ if "selected_question" in st.session_state:
         "Answer mode",
         options=["Text", "Voice"],
         horizontal=True,
+        key="answer_mode_selection",
     )
 
     if answer_mode == "Voice":
-        st.info("Voice mode coming Day 5 — recording and transcription not yet available.")
-        st.button("🎙️ Record", disabled=True)
-        answer_text = ""
+        st.caption("Recording will be capped at 5 minutes.")
+
+        audio_value = st.audio_input("Record your answer")
+
+        if audio_value is not None:
+            # Only transcribe once per new recording, not on every rerun
+            if st.session_state.get("last_audio_id") != id(audio_value):
+                with st.spinner("Transcribing your answer..."):
+                    try:
+                        audio_bytes = audio_value.read()
+                        result = transcribe_audio(audio_bytes)
+                        st.session_state["transcription_id"] = result["transcription_id"]
+                        st.session_state["transcript_text"] = result["transcript"]
+                        st.session_state["last_audio_id"] = id(audio_value)
+                    except Exception as e:
+                        st.error(f"Transcription failed: {e}")
+                        st.session_state.pop("transcription_id", None)
+                        st.session_state.pop("transcript_text", None)
+
+        if "transcript_text" in st.session_state:
+            st.success("Transcription complete. Review and edit below if needed.")
+            edited_transcript = st.text_area(
+                "Transcript (editable)",
+                value=st.session_state["transcript_text"],
+                height=200,
+                key="transcript_editor",
+            )
+            st.session_state["transcript_text"] = edited_transcript
+
+            if st.button("Re-record"):
+                for key in ["transcription_id", "transcript_text", "last_audio_id"]:
+                    st.session_state.pop(key, None)
+                st.rerun()
+
+        answer_text = st.session_state.get("transcript_text", "")
+
     else:
-        answer_text = st.text_area(
-            "Type your answer here",
-            height=200,
-            key="answer_text_input",
-        )
+        answer_text = st.text_area("Type your answer here", height=200, key="answer_text_input")
+        # Clear any leftover voice state when switching back to Text
+        for key in ["transcription_id", "transcript_text", "last_audio_id"]:
+            st.session_state.pop(key, None)
 
     evaluate_clicked = st.button(
         "Evaluate Answer",
-        disabled=(answer_mode == "Voice" or not answer_text.strip()),
+        disabled=not answer_text.strip(),
     )
 
     if evaluate_clicked:
@@ -92,11 +125,15 @@ if "selected_question" in st.session_state:
                 topic_id=selected_topic["id"],
                 question_text=st.session_state["selected_question"],
                 answer_text=answer_text.strip(),
-                answer_mode="text",
+                answer_mode="voice" if answer_mode == "Voice" else "text",
                 source=st.session_state.get("question_source", "custom"),
+                transcription_id=st.session_state.get("transcription_id"),
             )
         st.session_state["last_evaluation"] = result
         st.success("Evaluation complete!")
+        # Clear temporary voice/text state now that the attempt is finalized
+        for key in ["transcription_id", "transcript_text", "last_audio_id"]:
+            st.session_state.pop(key, None)
 
 # --- Show result if one exists ---
 if "last_evaluation" in st.session_state:

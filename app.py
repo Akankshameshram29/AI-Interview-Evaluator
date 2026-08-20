@@ -1,6 +1,7 @@
 import streamlit as st
 from services.api_client import login, register
 from services.auth import save_token, is_authenticated
+import requests
 
 st.set_page_config(page_title="AI Interview Evaluator", page_icon="🎤")
 
@@ -41,5 +42,11 @@ with tab_register:
             save_token(result["access_token"], reg_email)
             st.success("Account created! Reloading...")
             st.rerun()
+        except requests.exceptions.HTTPError as e:
+            try:
+                detail = e.response.json().get("detail", "Unknown error")
+            except Exception:
+                detail = e.response.text
+            st.error(f"Registration failed: {detail}")
         except Exception as e:
-            st.error("Registration failed — email may already be in use.")
+            st.error(f"Unexpected error: {type(e).__name__}: {e}")

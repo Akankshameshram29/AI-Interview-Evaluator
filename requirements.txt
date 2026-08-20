@@ -10,3 +10,5 @@ passlib[bcrypt]
 pydantic
 email-validator
 bcrypt==4.0.1
+groq
+python-multipart

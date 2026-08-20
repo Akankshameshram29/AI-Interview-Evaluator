@@ -57,3 +57,13 @@ class Evaluation(Base):
     latency_ms = Column(Integer)
 
     attempt = relationship("PracticeAttempt", back_populates="evaluation")
+
+class Transcription(Base):
+    __tablename__ = "transcriptions"
+    id = Column(Integer, primary_key=True, index=True)
+    attempt_id = Column(Integer, ForeignKey("practice_attempts.id"), nullable=True)
+    transcript = Column(Text)
+    stt_provider = Column(String(100))
+    language = Column(String(20))
+    stt_confidence = Column(Integer)  # store as 0-100 for simplicity
+    created_at = Column(TIMESTAMP, server_default=func.now())
