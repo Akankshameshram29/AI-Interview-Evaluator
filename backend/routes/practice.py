@@ -7,21 +7,22 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from groq import Groq
 
 from database.connection import get_db
-from database.models import PracticeAttempt, Evaluation, Transcription, User
+from database.models import PracticeAttempt, Evaluation, Transcription, User, SuggestedQuestion
 from backend.services.security import get_current_user
-
-router = APIRouter(prefix="/practice", tags=["practice"])
-
-from groq import Groq
+from ml.question_analyzer import analyze_question
+from ml.rubric_builder import build_rubric
 from config.settings import settings
 
+router = APIRouter(prefix="/practice", tags=["practice"])
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
 
-MAX_RECORDING_SECONDS = 5 * 60  # 5 minutes
 
-
+# ---------------------------------------------------------------------------
+# /practice/evaluate
+# ---------------------------------------------------------------------------
 
 class EvaluateRequest(BaseModel):
     topic_id: int
@@ -67,8 +68,7 @@ def evaluate_answer(
     db.add(attempt)
     db.flush()  # get attempt.id without committing yet
 
-    # 2. If this answer came from a voice recording, link its transcription
-    #    row (created earlier, with attempt_id=None) to this real attempt
+    # 2. Link any earlier voice transcription to this now-real attempt
     if payload.transcription_id:
         transcription = db.query(Transcription).filter(
             Transcription.id == payload.transcription_id
@@ -76,7 +76,20 @@ def evaluate_answer(
         if transcription:
             transcription.attempt_id = attempt.id
 
-    # 3. STUB evaluation — fixed dummy scoring, replaced by real ML on Days 6-9
+    # 3. Derive expected concepts and build the rubric
+    existing_concepts = None
+    if payload.source == "suggested":
+        matching_question = db.query(SuggestedQuestion).filter(
+            SuggestedQuestion.topic_id == payload.topic_id,
+            SuggestedQuestion.question_text == payload.question_text,
+        ).first()
+        if matching_question:
+            existing_concepts = matching_question.expected_concepts
+
+    concepts = analyze_question(payload.question_text, existing_concepts)
+    rubric = build_rubric(concepts)
+
+    # 4. STUB evaluation — fixed dummy scoring, replaced by real ML on Days 7-9
     stub_dimension_scores = [
         {"dimension": "correctness", "score": 70},
         {"dimension": "completeness", "score": 60},
@@ -85,8 +98,9 @@ def evaluate_answer(
     stub_overall = 70
     stub_feedback = {
         "strengths": ["Answer addresses the core question."],
-        "improvements": ["This is placeholder feedback — real evaluation coming soon."],
-        "concept_coverage": "Not yet analyzed (stub).",
+        "improvements": ["This is placeholder feedback — real scoring coming Day 7-9."],
+        "concept_coverage": "Not yet analyzed (stub) — see rubric below.",
+        "rubric": rubric,
     }
     latency_ms = int((time.time() - start_time) * 1000)
 
@@ -129,14 +143,13 @@ def transcribe_audio(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Save uploaded audio to a temp file (faster-whisper needs a file path, not raw bytes)
+    # Save uploaded audio to a temp file, then send it to Groq's hosted Whisper API
     suffix = os.path.splitext(audio.filename or "audio.wav")[1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(audio.file.read())
         tmp_path = tmp.name
 
     try:
-        # Basic size guard against absurdly long/corrupt recordings
         file_size_mb = os.path.getsize(tmp_path) / (1024 * 1024)
         if file_size_mb > 50:
             raise HTTPException(status_code=400, detail="Recording too long or file too large.")
@@ -145,7 +158,7 @@ def transcribe_audio(
             with open(tmp_path, "rb") as audio_file:
                 transcription_result = groq_client.audio.transcriptions.create(
                     file=audio_file,
-                    model="whisper-large-v3-turbo",  # fast + accurate
+                    model="whisper-large-v3-turbo",
                 )
             transcript_text = transcription_result.text.strip()
             detected_language = None
@@ -158,7 +171,7 @@ def transcribe_audio(
             raise HTTPException(status_code=422, detail="No speech detected. Please try recording again.")
 
         transcription = Transcription(
-            attempt_id=None,  # linked later, at evaluate time
+            attempt_id=None,
             transcript=transcript_text,
             stt_provider="groq-whisper-large-v3-turbo",
             language=detected_language,
@@ -176,6 +189,5 @@ def transcribe_audio(
         )
 
     finally:
-        # Always delete the temp audio file, whether transcription succeeded or failed
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
