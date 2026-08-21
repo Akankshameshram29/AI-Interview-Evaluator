@@ -15,6 +15,7 @@ from backend.services.security import get_current_user
 from ml.question_analyzer import analyze_question
 from ml.rubric_builder import build_rubric
 from config.settings import settings
+from ml.coverage_engine import evaluate_concept_coverage
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
@@ -86,28 +87,41 @@ def evaluate_answer(
         if matching_question:
             existing_concepts = matching_question.expected_concepts
 
+    
     concepts = analyze_question(payload.question_text, existing_concepts)
     rubric = build_rubric(concepts)
 
-    # 4. STUB evaluation — fixed dummy scoring, replaced by real ML on Days 7-9
+    # 4. Real concept coverage — replaces stub scoring's concept portion
+    concept_results = evaluate_concept_coverage(rubric, payload.answer_text)
+
+    # Overall/dimension scoring itself is still a placeholder — real scoring engine comes Day 8
+    covered_count = sum(1 for c in concept_results if c["status"] == "covered")
+    partial_count = sum(1 for c in concept_results if c["status"] == "partial")
+    total_concepts = len(concept_results) or 1  # avoid divide-by-zero
+
+    # Rough placeholder overall score, weighted by actual coverage —
+    # this is still provisional; Day 8 replaces this with the real scoring engine
+    provisional_overall = round(
+        ((covered_count * 100) + (partial_count * 50)) / total_concepts
+    )
+
     stub_dimension_scores = [
         {"dimension": "correctness", "score": 70},
-        {"dimension": "completeness", "score": 60},
+        {"dimension": "completeness", "score": provisional_overall},
         {"dimension": "clarity", "score": 80},
     ]
-    stub_overall = 70
     stub_feedback = {
-        "strengths": ["Answer addresses the core question."],
-        "improvements": ["This is placeholder feedback — real scoring coming Day 7-9."],
-        "concept_coverage": "Not yet analyzed (stub) — see rubric below.",
+        "strengths": ["Answer addresses the core question." if covered_count > 0 else "Answer submitted for evaluation."],
+        "improvements": ["This is placeholder feedback — full scoring engine coming Day 8."],
+        "concept_results": concept_results,   # NEW — real covered/partial/missing data
         "rubric": rubric,
     }
     latency_ms = int((time.time() - start_time) * 1000)
 
     evaluation = Evaluation(
         attempt_id=attempt.id,
-        evaluator_version="stub-v0",
-        overall_score=stub_overall,
+        evaluator_version="coverage-v1",   # bumped from stub-v0, since coverage is now real
+        overall_score=provisional_overall,
         dimension_scores=stub_dimension_scores,
         feedback=stub_feedback,
         latency_ms=latency_ms,
@@ -117,7 +131,7 @@ def evaluate_answer(
 
     return EvaluationResponse(
         attempt_id=attempt.id,
-        overall_score=stub_overall,
+        overall_score=provisional_overall,
         dimension_scores=stub_dimension_scores,
         feedback=stub_feedback,
         answer_mode=payload.answer_mode,

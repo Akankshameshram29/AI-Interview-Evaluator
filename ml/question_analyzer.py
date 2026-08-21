@@ -24,10 +24,11 @@ Example format: ["gradient descent", "loss function", "learning rate"]"""
 
     try:
         response = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=200,
+           model="openai/gpt-oss-20b",
+           messages=[{"role": "user", "content": prompt}],
+           temperature=0.2,
+           max_tokens=500,
+           reasoning_effort="low",   # keeps gpt-oss models from spending tokens on internal reasoning
         )
         raw_output = response.choices[0].message.content.strip()
 
@@ -40,16 +41,22 @@ Example format: ["gradient descent", "loss function", "learning rate"]"""
         if isinstance(concepts, list) and all(isinstance(c, str) for c in concepts):
             return concepts
 
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[question_analyzer] LLM call failed: {type(e).__name__}: {e}")
+        try:
+            print(f"[question_analyzer] Raw response was: {raw_output!r}")
+        except NameError:
+            print("[question_analyzer] No raw_output captured before failure.")
 
     # Fallback if LLM call or parsing fails — never leave the pipeline with nothing
     return _fallback_concepts(question_text)
 
 
 def _fallback_concepts(question_text: str) -> list[str]:
-    """Simple keyword-based fallback if the LLM call fails for any reason."""
     words = [w.strip(".,?!").lower() for w in question_text.split()]
-    stopwords = {"what", "is", "the", "a", "an", "how", "does", "explain", "why", "of", "in", "and", "to"}
-    keywords = [w for w in words if w not in stopwords and len(w) > 3]
-    return keywords[:5] if keywords else ["general understanding"]
+    stopwords = {"what", "is", "the", "a", "an", "how", "does", "explain", "why", "of", "in", "and", "to", "are"}
+    keywords = [w for w in words if w not in stopwords and len(w) >= 2]   # >= 2, not > 2
+    if keywords:
+        return keywords[:5]
+    fallback_words = [w.strip(".,?!") for w in question_text.split() if len(w) >= 2]
+    return fallback_words[:3] if fallback_words else [question_text.strip()]
