@@ -16,6 +16,9 @@ from ml.question_analyzer import analyze_question
 from ml.rubric_builder import build_rubric
 from config.settings import settings
 from ml.coverage_engine import evaluate_concept_coverage
+from ml.technical_checker import check_technical_accuracy
+from ml.scoring_engine import compute_scores
+from database.models import Topic
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
@@ -91,39 +94,36 @@ def evaluate_answer(
     concepts = analyze_question(payload.question_text, existing_concepts)
     rubric = build_rubric(concepts)
 
-    # 4. Real concept coverage — replaces stub scoring's concept portion
+        # 4. Real concept coverage
     concept_results = evaluate_concept_coverage(rubric, payload.answer_text)
 
-    # Overall/dimension scoring itself is still a placeholder — real scoring engine comes Day 8
+    # 5. Technical accuracy checks — need the topic's name for the misconception lookup
+    topic = db.query(Topic).filter(Topic.id == payload.topic_id).first()
+    topic_name = topic.name if topic else ""
+    technical_flags = check_technical_accuracy(payload.answer_text, topic_name)
+
+    # 6. Real scoring — replaces the Day 6/7 provisional placeholder entirely
+    scores = compute_scores(concept_results, technical_flags, payload.answer_text)
+    overall_score = scores["overall_score"]
+    dimension_scores_list = scores["dimension_scores"]
+
     covered_count = sum(1 for c in concept_results if c["status"] == "covered")
-    partial_count = sum(1 for c in concept_results if c["status"] == "partial")
-    total_concepts = len(concept_results) or 1  # avoid divide-by-zero
 
-    # Rough placeholder overall score, weighted by actual coverage —
-    # this is still provisional; Day 8 replaces this with the real scoring engine
-    provisional_overall = round(
-        ((covered_count * 100) + (partial_count * 50)) / total_concepts
-    )
-
-    stub_dimension_scores = [
-        {"dimension": "correctness", "score": 70},
-        {"dimension": "completeness", "score": provisional_overall},
-        {"dimension": "clarity", "score": 80},
-    ]
-    stub_feedback = {
-        "strengths": ["Answer addresses the core question." if covered_count > 0 else "Answer submitted for evaluation."],
-        "improvements": ["This is placeholder feedback — full scoring engine coming Day 8."],
-        "concept_results": concept_results,   # NEW — real covered/partial/missing data
+    feedback = {
+        "strengths": _build_strengths(concept_results),
+        "improvements": _build_improvements(concept_results, technical_flags),
+        "concept_results": concept_results,
+        "technical_flags": technical_flags,
         "rubric": rubric,
     }
     latency_ms = int((time.time() - start_time) * 1000)
 
     evaluation = Evaluation(
         attempt_id=attempt.id,
-        evaluator_version="coverage-v1",   # bumped from stub-v0, since coverage is now real
-        overall_score=provisional_overall,
-        dimension_scores=stub_dimension_scores,
-        feedback=stub_feedback,
+        evaluator_version="scoring-v1",   # bumped again — real scoring engine now live
+        overall_score=overall_score,
+        dimension_scores=dimension_scores_list,
+        feedback=feedback,
         latency_ms=latency_ms,
     )
     db.add(evaluation)
@@ -131,77 +131,28 @@ def evaluate_answer(
 
     return EvaluationResponse(
         attempt_id=attempt.id,
-        overall_score=provisional_overall,
-        dimension_scores=stub_dimension_scores,
-        feedback=stub_feedback,
+        overall_score=overall_score,
+        dimension_scores=dimension_scores_list,
+        feedback=feedback,
         answer_mode=payload.answer_mode,
         question_text=payload.question_text,
         answer_text=payload.answer_text,
     )
 
-
-# ---------------------------------------------------------------------------
-# /practice/transcribe
-# ---------------------------------------------------------------------------
-
-class TranscribeResponse(BaseModel):
-    transcription_id: int
-    transcript: str
-    language: Optional[str]
-    confidence: Optional[int]
+def _build_strengths(concept_results: list[dict]) -> list[str]:
+    covered = [c["concept"] for c in concept_results if c["status"] == "covered"]
+    if covered:
+        return [f"Clearly addressed: {', '.join(covered)}."]
+    return ["Answer submitted for evaluation."]
 
 
-@router.post("/transcribe", response_model=TranscribeResponse)
-def transcribe_audio(
-    audio: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    # Save uploaded audio to a temp file, then send it to Groq's hosted Whisper API
-    suffix = os.path.splitext(audio.filename or "audio.wav")[1] or ".wav"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(audio.file.read())
-        tmp_path = tmp.name
-
-    try:
-        file_size_mb = os.path.getsize(tmp_path) / (1024 * 1024)
-        if file_size_mb > 50:
-            raise HTTPException(status_code=400, detail="Recording too long or file too large.")
-
-        try:
-            with open(tmp_path, "rb") as audio_file:
-                transcription_result = groq_client.audio.transcriptions.create(
-                    file=audio_file,
-                    model="whisper-large-v3-turbo",
-                )
-            transcript_text = transcription_result.text.strip()
-            detected_language = None
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=503, detail="Speech-to-text service unavailable. Please try again.")
-
-        if not transcript_text:
-            raise HTTPException(status_code=422, detail="No speech detected. Please try recording again.")
-
-        transcription = Transcription(
-            attempt_id=None,
-            transcript=transcript_text,
-            stt_provider="groq-whisper-large-v3-turbo",
-            language=detected_language,
-            stt_confidence=None,
-        )
-        db.add(transcription)
-        db.commit()
-        db.refresh(transcription)
-
-        return TranscribeResponse(
-            transcription_id=transcription.id,
-            transcript=transcript_text,
-            language=detected_language,
-            confidence=None,
-        )
-
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+def _build_improvements(concept_results: list[dict], technical_flags: list[dict]) -> list[str]:
+    improvements = []
+    missing = [c["concept"] for c in concept_results if c["status"] == "missing"]
+    if missing:
+        improvements.append(f"Consider addressing: {', '.join(missing)}.")
+    for flag in technical_flags:
+        improvements.append(flag["explanation"])
+    if not improvements:
+        improvements.append("Good coverage — consider adding more depth or examples.")
+    return improvements
