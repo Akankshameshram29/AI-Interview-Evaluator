@@ -5,6 +5,7 @@
     "answer": "Bias is error from overly simple assumptions, variance is error from sensitivity to small fluctuations in training data. Simple models have high bias and low variance (underfitting), complex models have low bias and high variance (overfitting). The goal is to find the right balance.",
     "human_label": "excellent",
     "human_score": 95,
+    "human_covered_concepts": ["bias", "variance", "underfitting", "overfitting", "model complexity"],
     "notes": "Covers all core concepts clearly and accurately."
   },
   {
@@ -13,6 +14,7 @@
     "answer": "It's about how good a model is.",
     "human_label": "vague",
     "human_score": 15,
+    "human_covered_concepts": [],
     "notes": "Technically not wrong, but says almost nothing specific."
   },
   {
@@ -21,6 +23,115 @@
     "answer": "INNER JOIN returns all rows from both tables, matched or not.",
     "human_label": "incorrect",
     "human_score": 10,
+    "human_covered_concepts": [],
     "notes": "This describes FULL OUTER JOIN, not INNER JOIN — a real technical error."
-  }
+  },
+  {
+  "topic": "DL",
+  "question": "What is backpropagation?",
+  "answer": "Backpropagation calculates the gradient of the loss function with respect to each weight by applying the chain rule, moving backward from the output layer. These gradients are then used to update the weights via gradient descent, minimizing the loss over training iterations.",
+  "human_label": "excellent",
+  "human_score": 90,
+  "human_covered_concepts": ["gradient descent", "chain rule", "loss function", "weight update"],
+  "notes": "Solid, accurate explanation covering all core mechanics."
+},
+{
+  "topic": "DL",
+  "question": "What is the vanishing gradient problem?",
+  "answer": "It happens in deep networks sometimes.",
+  "human_label": "vague",
+  "human_score": 10,
+  "human_covered_concepts": [],
+  "notes": "No real explanation of the mechanism at all."
+},
+{
+  "topic": "NLP",
+  "question": "What is the difference between stemming and lemmatization?",
+  "answer": "Stemming chops off word endings using simple rules, often producing non-words (like 'studies' to 'studi'). Lemmatization uses a dictionary and morphological analysis to return the actual base word (like 'studies' to 'study'). Lemmatization is more accurate but slower.",
+  "human_label": "excellent",
+  "human_score": 92,
+  "human_covered_concepts": ["word normalization", "morphology", "dictionary lookup"],
+  "notes": "Clear, correct, well-contrasted explanation."
+},
+{
+  "topic": "NLP",
+  "question": "How does attention work in transformers?",
+  "answer": "Attention lets the model focus on relevant words. It uses some kind of scoring between words to figure out importance.",
+  "human_label": "partial",
+  "human_score": 45,
+  "human_covered_concepts": ["context weighting"],
+  "notes": "Right general idea but misses query/key/value mechanics and self-attention terminology."
+},
+{
+  "topic": "Python",
+  "question": "What is the difference between a list and a tuple?",
+  "answer": "Lists are mutable, meaning you can change their contents after creation, while tuples are immutable and cannot be changed once created. Lists use square brackets, tuples use parentheses. Tuples are generally slightly faster due to immutability.",
+  "human_label": "excellent",
+  "human_score": 90,
+  "human_covered_concepts": ["mutability", "data structures", "performance"],
+  "notes": "Accurate and complete."
+},
+{
+  "topic": "Python",
+  "question": "What is the difference between a list and a tuple?",
+  "answer": "Lists are immutable and tuples are mutable.",
+  "human_label": "incorrect",
+  "human_score": 5,
+  "human_covered_concepts": [],
+  "notes": "Exactly backwards — a genuine factual error."
+},
+{
+  "topic": "Python",
+  "question": "Explain Python's GIL.",
+  "answer": "The Global Interpreter Lock ensures only one thread executes Python bytecode at a time, even on multi-core systems. This means CPU-bound multithreaded programs don't get true parallelism in CPython, though I/O-bound tasks can still benefit from threading. Multiprocessing is often used instead to bypass the GIL for CPU-bound work.",
+  "human_label": "excellent",
+  "human_score": 93,
+  "human_covered_concepts": ["global interpreter lock", "threading", "concurrency", "multiprocessing"],
+  "notes": "Thorough and technically precise."
+},
+{
+  "topic": "SQL",
+  "question": "What is the difference between INNER JOIN and LEFT JOIN?",
+  "answer": "INNER JOIN only returns rows that have matches in both tables. LEFT JOIN returns all rows from the left table, and matching rows from the right table, filling in NULLs where there's no match.",
+  "human_label": "excellent",
+  "human_score": 95,
+  "human_covered_concepts": ["joins", "relational tables", "null handling"],
+  "notes": "Correct and complete."
+},
+{
+  "topic": "SQL",
+  "question": "What is a database index and how does it improve performance?",
+  "answer": "An index is a data structure, often a B-tree, that lets the database find rows faster without scanning the whole table. It speeds up reads significantly, but slows down writes slightly since the index needs updating too, so there's a tradeoff.",
+  "human_label": "excellent",
+  "human_score": 90,
+  "human_covered_concepts": ["indexing", "query optimization", "B-tree", "read/write tradeoff"],
+  "notes": "Covers all key points accurately."
+},
+{
+  "topic": "GenAI",
+  "question": "What is the difference between fine-tuning and prompting?",
+  "answer": "Fine-tuning retrains a model's weights on new data to specialize it for a task. Prompting instead just gives instructions or examples in the input at inference time, without changing the model at all. Few-shot prompting is a common technique that includes example input-output pairs directly in the prompt.",
+  "human_label": "excellent",
+  "human_score": 92,
+  "human_covered_concepts": ["fine-tuning", "prompt engineering", "model adaptation", "few-shot learning"],
+  "notes": "Clear and accurate distinction."
+},
+{
+  "topic": "GenAI",
+  "question": "What is RAG (Retrieval-Augmented Generation)?",
+  "answer": "RAG combines a retrieval step with generation. Relevant documents are found using a vector search over embeddings, and that content is injected into the prompt so the model can generate more grounded, up-to-date answers.",
+  "human_label": "excellent",
+  "human_score": 90,
+  "human_covered_concepts": ["retrieval", "embeddings", "vector search", "context injection"],
+  "notes": "Accurately covers the full RAG pipeline."
+},
+{
+  "topic": "GenAI",
+  "question": "What is RAG (Retrieval-Augmented Generation)?",
+  "answer": "RAG makes AI answers better somehow by adding extra info.",
+  "human_label": "vague",
+  "human_score": 12,
+  "human_covered_concepts": [],
+  "notes": "No real technical content."
+}
 ]

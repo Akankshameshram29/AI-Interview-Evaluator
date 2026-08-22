@@ -2,9 +2,9 @@ from ml.embedding_service import compute_similarity_matrix, split_into_sentences
 
 # Thresholds — tuned conservatively; you'll calibrate these properly on Day 9
 # against your labeled benchmark once real answers are being scored for real.
-COVERED_THRESHOLD = 0.25
-PARTIAL_THRESHOLD = 0.12
 
+COVERED_THRESHOLD = 0.09
+PARTIAL_THRESHOLD = 0.05
 
 def evaluate_concept_coverage(rubric: list[dict], answer_text: str) -> list[dict]:
     """

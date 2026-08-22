@@ -1,29 +1,18 @@
 # ml/scoring_engine.py
 
 def compute_scores(concept_results: list[dict], technical_flags: list[dict], answer_text: str) -> dict:
-    """
-    Combines concept coverage and technical check results into
-    dimension scores and an overall score.
-
-    Returns:
-        {
-            "overall_score": int,
-            "dimension_scores": [
-                {"dimension": "correctness", "score": int},
-                {"dimension": "completeness", "score": int},
-                {"dimension": "clarity", "score": int},
-            ]
-        }
-    """
     completeness_score = _score_completeness(concept_results)
     correctness_score = _score_correctness(concept_results, technical_flags)
     clarity_score = _score_clarity(answer_text)
 
-    # Weighted overall — completeness and correctness matter most for
-    # a technical interview answer; clarity matters, but less.
     overall_score = round(
         (completeness_score * 0.4) + (correctness_score * 0.4) + (clarity_score * 0.2)
     )
+
+    # If technical flags were raised, cap the overall score regardless of clarity —
+    # a technically wrong answer shouldn't score moderately well just because it's concise
+    if technical_flags:
+        overall_score = min(overall_score, 35)
 
     return {
         "overall_score": overall_score,
@@ -84,14 +73,19 @@ def _score_clarity(answer_text: str) -> int:
     Simple heuristic clarity score based on length and structure —
     not a deep NLP measure, just enough to avoid a flat constant.
     Very short or very rambling answers score lower.
+
+    Bands adjusted (Day 9 calibration) after benchmark testing showed
+    concise-but-complete answers (e.g. short, precise technical
+    definitions) were being penalized too harshly under the original
+    <40-word band.
     """
     word_count = len(answer_text.split())
 
-    if word_count < 15:
-        return 40   # too brief to be a clear, complete explanation
-    elif word_count < 40:
-        return 65
+    if word_count < 8:
+        return 40
+    elif word_count < 20:
+        return 70
     elif word_count <= 200:
-        return 85   # reasonable, focused length
+        return 85
     else:
-        return 70   # very long answers often ramble or lose focus
+        return 70

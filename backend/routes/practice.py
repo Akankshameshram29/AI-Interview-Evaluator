@@ -19,6 +19,8 @@ from ml.coverage_engine import evaluate_concept_coverage
 from ml.technical_checker import check_technical_accuracy
 from ml.scoring_engine import compute_scores
 from database.models import Topic
+from ml.evaluation_service import run_evaluation
+from database.models import Topic
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
@@ -80,7 +82,7 @@ def evaluate_answer(
         if transcription:
             transcription.attempt_id = attempt.id
 
-    # 3. Derive expected concepts and build the rubric
+    
     existing_concepts = None
     if payload.source == "suggested":
         matching_question = db.query(SuggestedQuestion).filter(
@@ -90,40 +92,24 @@ def evaluate_answer(
         if matching_question:
             existing_concepts = matching_question.expected_concepts
 
-    
-    concepts = analyze_question(payload.question_text, existing_concepts)
-    rubric = build_rubric(concepts)
-
-        # 4. Real concept coverage
-    concept_results = evaluate_concept_coverage(rubric, payload.answer_text)
-
-    # 5. Technical accuracy checks — need the topic's name for the misconception lookup
     topic = db.query(Topic).filter(Topic.id == payload.topic_id).first()
     topic_name = topic.name if topic else ""
-    technical_flags = check_technical_accuracy(payload.answer_text, topic_name)
 
-    # 6. Real scoring — replaces the Day 6/7 provisional placeholder entirely
-    scores = compute_scores(concept_results, technical_flags, payload.answer_text)
-    overall_score = scores["overall_score"]
-    dimension_scores_list = scores["dimension_scores"]
+    result = run_evaluation(
+        question_text=payload.question_text,
+        answer_text=payload.answer_text,
+        topic_name=topic_name,
+        existing_concepts=existing_concepts,
+    )
 
-    covered_count = sum(1 for c in concept_results if c["status"] == "covered")
-
-    feedback = {
-        "strengths": _build_strengths(concept_results),
-        "improvements": _build_improvements(concept_results, technical_flags),
-        "concept_results": concept_results,
-        "technical_flags": technical_flags,
-        "rubric": rubric,
-    }
     latency_ms = int((time.time() - start_time) * 1000)
 
     evaluation = Evaluation(
         attempt_id=attempt.id,
-        evaluator_version="scoring-v1",   # bumped again — real scoring engine now live
-        overall_score=overall_score,
-        dimension_scores=dimension_scores_list,
-        feedback=feedback,
+        evaluator_version=result["evaluator_version"],
+        overall_score=result["overall_score"],
+        dimension_scores=result["dimension_scores"],
+        feedback=result["feedback"],
         latency_ms=latency_ms,
     )
     db.add(evaluation)
@@ -131,9 +117,9 @@ def evaluate_answer(
 
     return EvaluationResponse(
         attempt_id=attempt.id,
-        overall_score=overall_score,
-        dimension_scores=dimension_scores_list,
-        feedback=feedback,
+        overall_score=result["overall_score"],
+        dimension_scores=result["dimension_scores"],
+        feedback=result["feedback"],
         answer_mode=payload.answer_mode,
         question_text=payload.question_text,
         answer_text=payload.answer_text,
