@@ -65,3 +65,18 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "recording.wav") -> dic
     )
     resp.raise_for_status()
     return resp.json()
+
+def get_attempts() -> list:
+    resp = requests.get(f"{BASE_URL}/attempts", headers=_auth_headers())
+    resp.raise_for_status()
+    return resp.json()
+
+def get_attempt_detail(attempt_id: int) -> dict:
+    resp = requests.get(f"{BASE_URL}/attempts/{attempt_id}", headers=_auth_headers())
+    resp.raise_for_status()
+    return resp.json()
+
+def get_progress() -> list:
+    resp = requests.get(f"{BASE_URL}/progress", headers=_auth_headers())
+    resp.raise_for_status()
+    return resp.json()

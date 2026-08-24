@@ -21,6 +21,7 @@ from ml.scoring_engine import compute_scores
 from database.models import Topic
 from ml.evaluation_service import run_evaluation
 from database.models import Topic
+from database.models import ProgressSnapshot
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
@@ -115,6 +116,8 @@ def evaluate_answer(
     db.add(evaluation)
     db.commit()
 
+    _update_progress_snapshot(db, current_user.id, payload.topic_id, result["overall_score"])
+
     return EvaluationResponse(
         attempt_id=attempt.id,
         overall_score=result["overall_score"],
@@ -142,3 +145,31 @@ def _build_improvements(concept_results: list[dict], technical_flags: list[dict]
     if not improvements:
         improvements.append("Good coverage — consider adding more depth or examples.")
     return improvements
+
+
+
+def _update_progress_snapshot(db: Session, user_id: int, topic_id: int, new_score: int):
+    """
+    Updates (or creates) the user's progress snapshot for this topic —
+    a running average score and attempt count, recalculated incrementally
+    rather than by re-scanning every past attempt each time.
+    """
+    snapshot = db.query(ProgressSnapshot).filter(
+        ProgressSnapshot.user_id == user_id,
+        ProgressSnapshot.topic_id == topic_id,
+    ).first()
+
+    if snapshot:
+        total_score = (snapshot.average_score * snapshot.attempts_count) + new_score
+        snapshot.attempts_count += 1
+        snapshot.average_score = round(total_score / snapshot.attempts_count)
+    else:
+        snapshot = ProgressSnapshot(
+            user_id=user_id,
+            topic_id=topic_id,
+            average_score=new_score,
+            attempts_count=1,
+        )
+        db.add(snapshot)
+
+    db.commit()

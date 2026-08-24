@@ -135,13 +135,48 @@ if "selected_question" in st.session_state:
         for key in ["transcription_id", "transcript_text", "last_audio_id"]:
             st.session_state.pop(key, None)
 
-# --- Show result if one exists ---
 if "last_evaluation" in st.session_state:
-    st.divider()
-    st.subheader("Result (stub)")
     result = st.session_state["last_evaluation"]
+    feedback = result["feedback"]
+
+    st.divider()
+    st.subheader("Results")
+
+    # 1. Overall score first
     st.metric("Overall Score", f"{result['overall_score']} / 100")
-    for dim in result["dimension_scores"]:
-        st.write(f"**{dim['dimension'].capitalize()}**: {dim['score']} / 100")
-    st.write("**Feedback:**")
-    st.json(result["feedback"])
+
+    # 2. Dimension cards
+    st.write("**Dimension Scores**")
+    cols = st.columns(len(result["dimension_scores"]))
+    for col, dim in zip(cols, result["dimension_scores"]):
+        with col:
+            st.metric(dim["dimension"].capitalize(), f"{dim['score']} / 100")
+
+    # 3. Concept coverage
+    st.write("**Concept Coverage**")
+    for concept in feedback.get("concept_results", []):
+        status_icon = {"covered": "✅", "partial": "🟡", "missing": "❌"}.get(concept["status"], "")
+        st.write(f"{status_icon} **{concept['concept']}** — {concept['status'].capitalize()}")
+        if concept.get("evidence"):
+            st.caption(f"Evidence: \"{concept['evidence']}\"")
+
+    # 4. Strengths and corrections
+    with st.expander("Strengths", expanded=True):
+        for s in feedback.get("strengths", []):
+            st.write(f"- {s}")
+
+    if feedback.get("technical_flags"):
+        with st.expander("Corrections", expanded=True):
+            for flag in feedback["technical_flags"]:
+                st.write(f"⚠️ {flag['explanation']}")
+
+    # 5. Improvement plan last
+    with st.expander("Improvement Plan"):
+        for imp in feedback.get("improvements", []):
+            st.write(f"- {imp}")
+
+    # 6. Original Q&A available below the summary
+    with st.expander("Original Question & Answer"):
+        st.write(f"**Question:** {result['question_text']}")
+        st.write(f"**Answer:** {result['answer_text']}")
+        st.caption(f"Mode: {result['answer_mode'].capitalize()}")
