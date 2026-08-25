@@ -4,24 +4,26 @@ import os
 import time
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from groq import Groq
+from backend.limiter import limiter
+from fastapi import Request
 
 from database.connection import get_db
-from database.models import PracticeAttempt, Evaluation, Transcription, User, SuggestedQuestion
+from database.models import (
+    PracticeAttempt,
+    Evaluation,
+    Transcription,
+    User,
+    SuggestedQuestion,
+    Topic,
+    ProgressSnapshot,
+)
 from backend.services.security import get_current_user
-from ml.question_analyzer import analyze_question
-from ml.rubric_builder import build_rubric
-from config.settings import settings
-from ml.coverage_engine import evaluate_concept_coverage
-from ml.technical_checker import check_technical_accuracy
-from ml.scoring_engine import compute_scores
-from database.models import Topic
 from ml.evaluation_service import run_evaluation
-from database.models import Topic
-from database.models import ProgressSnapshot
+from config.settings import settings
 
 router = APIRouter(prefix="/practice", tags=["practice"])
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
@@ -56,7 +58,9 @@ class EvaluationResponse(BaseModel):
 
 
 @router.post("/evaluate", response_model=EvaluationResponse)
+@limiter.limit("10/minute")
 def evaluate_answer(
+    request: Request,
     payload: EvaluateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -83,7 +87,7 @@ def evaluate_answer(
         if transcription:
             transcription.attempt_id = attempt.id
 
-    
+    # 3. Look up expected_concepts if this is a suggested question
     existing_concepts = None
     if payload.source == "suggested":
         matching_question = db.query(SuggestedQuestion).filter(
@@ -96,6 +100,7 @@ def evaluate_answer(
     topic = db.query(Topic).filter(Topic.id == payload.topic_id).first()
     topic_name = topic.name if topic else ""
 
+    # 4. Run the full evaluation pipeline (analyzer -> rubric -> coverage -> checks -> scoring -> feedback)
     result = run_evaluation(
         question_text=payload.question_text,
         answer_text=payload.answer_text,
@@ -128,25 +133,6 @@ def evaluate_answer(
         answer_text=payload.answer_text,
     )
 
-def _build_strengths(concept_results: list[dict]) -> list[str]:
-    covered = [c["concept"] for c in concept_results if c["status"] == "covered"]
-    if covered:
-        return [f"Clearly addressed: {', '.join(covered)}."]
-    return ["Answer submitted for evaluation."]
-
-
-def _build_improvements(concept_results: list[dict], technical_flags: list[dict]) -> list[str]:
-    improvements = []
-    missing = [c["concept"] for c in concept_results if c["status"] == "missing"]
-    if missing:
-        improvements.append(f"Consider addressing: {', '.join(missing)}.")
-    for flag in technical_flags:
-        improvements.append(flag["explanation"])
-    if not improvements:
-        improvements.append("Good coverage — consider adding more depth or examples.")
-    return improvements
-
-
 
 def _update_progress_snapshot(db: Session, user_id: int, topic_id: int, new_score: int):
     """
@@ -173,3 +159,83 @@ def _update_progress_snapshot(db: Session, user_id: int, topic_id: int, new_scor
         db.add(snapshot)
 
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# /practice/transcribe
+# ---------------------------------------------------------------------------
+
+class TranscribeResponse(BaseModel):
+    transcription_id: int
+    transcript: str
+    language: Optional[str]
+    confidence: Optional[int]
+
+
+def validate_audio_file_size(file_size_mb: float, max_size_mb: float = 50) -> None:
+    """Raises HTTPException if file is too large. Extracted as its own
+    function so it can be unit-tested in isolation (Day 11)."""
+    if file_size_mb > max_size_mb:
+        raise HTTPException(status_code=400, detail="Recording too long or file too large.")
+
+
+@router.post("/transcribe", response_model=TranscribeResponse)
+@limiter.limit("10/minute")
+def transcribe_audio(
+    request: Request,
+    audio: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Save uploaded audio to a temp file, then send it to Groq's hosted Whisper API
+    suffix = os.path.splitext(audio.filename or "audio.wav")[1] or ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(audio.file.read())
+        tmp_path = tmp.name
+
+    try:
+        file_size_mb = os.path.getsize(tmp_path) / (1024 * 1024)
+        validate_audio_file_size(file_size_mb)
+
+        try:
+            with open(tmp_path, "rb") as audio_file:
+                transcription_result = groq_client.audio.transcriptions.create(
+                    file=audio_file,
+                    model="whisper-large-v3-turbo",
+                )
+            transcript_text = transcription_result.text.strip()
+            detected_language = None
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=503, detail="Speech-to-text service unavailable. Please try again.")
+
+        if not transcript_text:
+            raise HTTPException(status_code=422, detail="No speech detected. Please try recording again.")
+
+        transcription = Transcription(
+            attempt_id=None,  # linked later, at evaluate time
+            transcript=transcript_text,
+            stt_provider="groq-whisper-large-v3-turbo",
+            language=detected_language,
+            stt_confidence=None,
+        )
+        db.add(transcription)
+        db.commit()
+        db.refresh(transcription)
+
+        return TranscribeResponse(
+            transcription_id=transcription.id,
+            transcript=transcript_text,
+            language=detected_language,
+            confidence=None,
+        )
+
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+def validate_audio_file_size(file_size_mb: float, max_size_mb: float = 50) -> None:
+    """Raises HTTPException if file is too large. Extracted for testability."""
+    if file_size_mb > max_size_mb:
+        raise HTTPException(status_code=400, detail="Recording too long or file too large.")
