@@ -19,14 +19,19 @@ list the key concepts a strong answer should cover.
 
 Question: "{question_text}"
 
-Return ONLY a JSON array of 3-6 short concept strings, nothing else.
-Example format: ["gradient descent", "loss function", "learning rate"]"""
+Rules:
+1. Include 1 primary high-level conceptual understanding point (e.g., "high-level purpose or definition of the concept").
+2. Include 2-3 specific sub-components or implementation mechanics.
+3. Keep the total list between 3 and 4 short concept strings max.
 
+Return ONLY a JSON array of short concept strings, nothing else.
+Example format: ["core definition and high-level purpose", "sub-component A", "sub-component B"]"""
+    raw_output = ""
     try:
         response = groq_client.chat.completions.create(
            model="openai/gpt-oss-20b",
            messages=[{"role": "user", "content": prompt}],
-           temperature=0.2,
+           temperature=0.1,
            max_tokens=500,
            reasoning_effort="low",   # keeps gpt-oss models from spending tokens on internal reasoning
         )

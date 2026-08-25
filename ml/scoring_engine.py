@@ -1,18 +1,23 @@
 # ml/scoring_engine.py
 
+
+import re
 def compute_scores(concept_results: list[dict], technical_flags: list[dict], answer_text: str) -> dict:
     completeness_score = _score_completeness(concept_results)
     correctness_score = _score_correctness(concept_results, technical_flags)
-    clarity_score = _score_clarity(answer_text)
+    clarity_score = _score_clarity(answer_text, concept_results)
+    
+    # GUARDRAIL: If 0 concepts are covered, force clarity score down and cap overall score
+    total_covered = sum(1 for c in concept_results if c["status"] == "covered")
+    if total_covered == 0:
+        clarity_score = min(clarity_score, 40)
 
     overall_score = round(
         (completeness_score * 0.4) + (correctness_score * 0.4) + (clarity_score * 0.2)
     )
 
-    # If technical flags were raised, cap the overall score regardless of clarity —
-    # a technically wrong answer shouldn't score moderately well just because it's concise
-    if technical_flags:
-        overall_score = min(overall_score, 35)
+    if technical_flags or total_covered == 0:
+        overall_score = min(overall_score, 15)
 
     return {
         "overall_score": overall_score,
@@ -56,36 +61,59 @@ def _score_correctness(concept_results: list[dict], technical_flags: list[dict])
     if not concept_results:
         base = 50  # no rubric to compare against — neutral baseline
     else:
-        # Use the same coverage-based signal as completeness as a starting point,
-        # since an answer that doesn't touch the right concepts at all
-        # can't be scored as "correct" independent of what it does say
-        covered_or_partial = sum(
-            1 for c in concept_results if c["status"] in ("covered", "partial")
-        )
-        base = round((covered_or_partial / len(concept_results)) * 100)
+        covered_count = sum(1 for c in concept_results if c["status"] == "covered")
+        partial_count = sum(1 for c in concept_results if c["status"] == "partial")
+        matched_any = (covered_count + partial_count) > 0
 
-    penalty = min(len(technical_flags) * 20, base)  # never go below 0
+        if matched_any:
+            # High baseline if at least one concept is touched without false statements
+            coverage_ratio = (covered_count + 0.5 * partial_count) / len(concept_results)
+            base = round(70 + (coverage_ratio * 30))  # Scales from 70 to 100
+        else:
+            # Zero concept matches: Give a floor score of 50 if the answer is non-empty,
+            # trusting that absence of detail is an completeness issue, not a hallucination.
+            base = 50
+
+    # Subtract heavy penalties ONLY for explicit technical errors/misconceptions
+    penalty = len(technical_flags) * 20
+    
     return max(0, base - penalty)
 
 
-def _score_clarity(answer_text: str) -> int:
-    """
-    Simple heuristic clarity score based on length and structure —
-    not a deep NLP measure, just enough to avoid a flat constant.
-    Very short or very rambling answers score lower.
 
-    Bands adjusted (Day 9 calibration) after benchmark testing showed
-    concise-but-complete answers (e.g. short, precise technical
-    definitions) were being penalized too harshly under the original
-    <40-word band.
-    """
-    word_count = len(answer_text.split())
 
+def _score_clarity(answer_text: str, concept_results: list[dict]) -> int:
+    words = answer_text.strip().split()
+    word_count = len(words)
+
+    # 1. Reject empty or extreme low-effort answers immediately
+    if word_count < 3:
+        return 0
+
+    # 2. Check for garbage / non-alphabetic input (e.g., "asdfasdf 1234 !!!")
+    alpha_words = [w for w in words if re.search(r'[a-zA-Z]', w)]
+    if len(alpha_words) / word_count < 0.5:
+        return 0  # Mostly non-text / gibberish
+
+    # 3. Base score according to length bands
     if word_count < 8:
-        return 40
+        score = 30
     elif word_count < 20:
-        return 70
+        score = 70
     elif word_count <= 200:
-        return 85
+        score = 85
     else:
-        return 70
+        score = 65  # Penalize heavy rambling
+
+    # 4. Coherence Guardrail: If answer failed to cover ANY concepts, 
+    # it cannot be considered "clear" technical communication.
+    total_concepts = len(concept_results)
+    covered_or_partial = sum(
+        1 for c in concept_results if c["status"] in ("covered", "partial")
+    )
+
+    if total_concepts > 0 and covered_or_partial == 0:
+        # Cap clarity at 10-15 if zero relevant concepts were addressed
+        score = min(score, 15)
+
+    return score

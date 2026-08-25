@@ -8,6 +8,19 @@ require_login()
 
 st.title("Practice")
 
+def on_topic_change():
+    """Clears answers, transcripts, and prior evaluations when topic changes."""
+    for key in [
+        "selected_question",
+        "expected_concepts",
+        "question_source",
+        "transcription_id",
+        "transcript_text",
+        "last_audio_id",
+        "last_evaluation",
+    ]:
+        st.session_state.pop(key, None)
+
 # --- Topic selection ---
 topics = get_topics()
 topic_names = [t["name"] for t in topics]
@@ -33,6 +46,7 @@ for q in questions:
                 st.session_state["selected_question"] = q["question_text"]
                 st.session_state["expected_concepts"] = q["expected_concepts"]
                 st.session_state["question_source"] = "suggested"
+                st.session_state.pop("last_evaluation", None)
 
 # --- Custom question ---
 st.subheader("Or write your own question")
@@ -46,6 +60,7 @@ if st.button("Use custom question"):
         st.session_state["selected_question"] = custom_question.strip()
         st.session_state["expected_concepts"] = None  # will be derived Day 6
         st.session_state["question_source"] = "custom"
+        st.session_state.pop("last_evaluation", None)
     else:
         st.warning("Please type a question first.")
 
@@ -77,19 +92,32 @@ if "selected_question" in st.session_state:
         audio_value = st.audio_input("Record your answer")
 
         if audio_value is not None:
-            # Only transcribe once per new recording, not on every rerun
             if st.session_state.get("last_audio_id") != id(audio_value):
                 with st.spinner("Transcribing your answer..."):
                     try:
                         audio_bytes = audio_value.read()
                         result = transcribe_audio(audio_bytes)
-                        st.session_state["transcription_id"] = result["transcription_id"]
-                        st.session_state["transcript_text"] = result["transcript"]
-                        st.session_state["last_audio_id"] = id(audio_value)
+
+                        # Check if API returned an error string or empty transcript
+                        if isinstance(result, dict) and result.get("transcript", "").strip():
+                            st.session_state["transcription_id"] = result["transcription_id"]
+                            st.session_state["transcript_text"] = result["transcript"]
+                            st.session_state["last_audio_id"] = id(audio_value)
+                        else:
+                            st.warning("⚠️ No clear speech detected in your recording. Please try speaking into your mic again.")
+                            for key in ["transcription_id", "transcript_text", "last_audio_id"]:
+                                st.session_state.pop(key, None)
+
                     except Exception as e:
-                        st.error(f"Transcription failed: {e}")
-                        st.session_state.pop("transcription_id", None)
-                        st.session_state.pop("transcript_text", None)
+                        # Display clear error message when FastAPI throws a 422 (silence) or 400
+                        err_msg = str(e)
+                        if "422" in err_msg or "No speech detected" in err_msg:
+                            st.warning("⚠️ No clear speech detected in your recording. Please check your mic and try again.")
+                        else:
+                            st.error(f"Transcription failed: {err_msg}")
+                        
+                        for key in ["transcription_id", "transcript_text", "last_audio_id"]:
+                            st.session_state.pop(key, None)
 
         if "transcript_text" in st.session_state:
             st.success("Transcription complete. Review and edit below if needed.")
@@ -135,48 +163,17 @@ if "selected_question" in st.session_state:
         for key in ["transcription_id", "transcript_text", "last_audio_id"]:
             st.session_state.pop(key, None)
 
+from components.evaluation_display import render_evaluation_result
+
 if "last_evaluation" in st.session_state:
     result = st.session_state["last_evaluation"]
-    feedback = result["feedback"]
-
     st.divider()
     st.subheader("Results")
-
-    # 1. Overall score first
-    st.metric("Overall Score", f"{result['overall_score']} / 100")
-
-    # 2. Dimension cards
-    st.write("**Dimension Scores**")
-    cols = st.columns(len(result["dimension_scores"]))
-    for col, dim in zip(cols, result["dimension_scores"]):
-        with col:
-            st.metric(dim["dimension"].capitalize(), f"{dim['score']} / 100")
-
-    # 3. Concept coverage
-    st.write("**Concept Coverage**")
-    for concept in feedback.get("concept_results", []):
-        status_icon = {"covered": "✅", "partial": "🟡", "missing": "❌"}.get(concept["status"], "")
-        st.write(f"{status_icon} **{concept['concept']}** — {concept['status'].capitalize()}")
-        if concept.get("evidence"):
-            st.caption(f"Evidence: \"{concept['evidence']}\"")
-
-    # 4. Strengths and corrections
-    with st.expander("Strengths", expanded=True):
-        for s in feedback.get("strengths", []):
-            st.write(f"- {s}")
-
-    if feedback.get("technical_flags"):
-        with st.expander("Corrections", expanded=True):
-            for flag in feedback["technical_flags"]:
-                st.write(f"⚠️ {flag['explanation']}")
-
-    # 5. Improvement plan last
-    with st.expander("Improvement Plan"):
-        for imp in feedback.get("improvements", []):
-            st.write(f"- {imp}")
-
-    # 6. Original Q&A available below the summary
-    with st.expander("Original Question & Answer"):
-        st.write(f"**Question:** {result['question_text']}")
-        st.write(f"**Answer:** {result['answer_text']}")
-        st.caption(f"Mode: {result['answer_mode'].capitalize()}")
+    render_evaluation_result(
+        overall_score=result["overall_score"],
+        dimension_scores=result["dimension_scores"],
+        feedback=result["feedback"],
+        question_text=result["question_text"],
+        answer_text=result["answer_text"],
+        answer_mode=result["answer_mode"],
+    )

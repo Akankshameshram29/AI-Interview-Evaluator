@@ -8,6 +8,8 @@ def _auth_headers() -> dict:
     token = get_token()
     return {"Authorization": f"Bearer {token}"} if token else {}
 
+
+
 def register(email: str, password: str, name: str) -> dict:
     resp = requests.post(f"{BASE_URL}/auth/register", json={
         "email": email, "password": password, "name": name

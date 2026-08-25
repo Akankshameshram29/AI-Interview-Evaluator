@@ -3,7 +3,7 @@ import tempfile
 import os
 import time
 from typing import Optional, List
-
+import re
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -203,8 +203,11 @@ def transcribe_audio(
                     file=audio_file,
                     model="whisper-large-v3-turbo",
                 )
-            transcript_text = transcription_result.text.strip()
-            detected_language = None
+            raw_transcript = transcription_result.text.strip()
+            detected_language = getattr(transcription_result, "language", None)
+
+            # Validate transcript against silence artifacts
+            transcript_text = validate_transcript_content(raw_transcript)
         except HTTPException:
             raise
         except Exception:
@@ -235,7 +238,42 @@ def transcribe_audio(
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-def validate_audio_file_size(file_size_mb: float, max_size_mb: float = 50) -> None:
-    """Raises HTTPException if file is too large. Extracted for testability."""
-    if file_size_mb > max_size_mb:
-        raise HTTPException(status_code=400, detail="Recording too long or file too large.")
+
+
+WHISPER_ARTIFACTS = {
+    "oh", "oh,", "um", "uh", "you", "thank you.", "thanks for watching!",
+    "subtitles by", "bye.", "amara.org", "oh, oh, oh", "oh, oh, oh, oh",
+    "oh, oh, oh, oh."
+}
+
+def validate_transcript_content(transcript_text: str) -> str:
+    """
+    Validates transcribed text to filter out Whisper silence artifacts.
+    Raises HTTPException 422 if no meaningful speech was detected.
+    """
+    cleaned = transcript_text.strip()
+    words = cleaned.lower().split()
+
+    # 1. Empty or single-word checks
+    if not cleaned or len(words) < 2:
+        raise HTTPException(
+            status_code=422, 
+            detail="No speech detected. Please speak clearly into your mic and try again."
+        )
+
+    # 2. Match exact known Whisper hallucination strings
+    if cleaned.lower() in WHISPER_ARTIFACTS:
+        raise HTTPException(
+            status_code=422, 
+            detail="No speech detected (only background noise captured). Please try again."
+        )
+
+    # 3. Catch low-entropy repetitive hallucinations (e.g. "Oh, oh, oh, oh")
+    unique_words = set(re.sub(r'[^\w\s]', '', w) for w in words)
+    if len(unique_words) <= 2 and len(words) >= 4:
+        raise HTTPException(
+            status_code=422, 
+            detail="No clear speech detected. Please check your mic and try again."
+        )
+
+    return cleaned

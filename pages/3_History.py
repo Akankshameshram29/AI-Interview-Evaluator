@@ -58,27 +58,32 @@ for _, row in filtered.iterrows():
             st.session_state["viewing_attempt_id"] = row["attempt_id"]
             st.rerun()
 
-# --- Attempt detail view ---
+from components.evaluation_display import render_evaluation_result
+
+# --- Render Attempt Detail Section ---
 if "viewing_attempt_id" in st.session_state:
     st.divider()
-    detail = get_attempt_detail(st.session_state["viewing_attempt_id"])
+    
+    col_title, col_close = st.columns([5, 1])
+    with col_title:
+        st.subheader("Attempt Details")
+    with col_close:
+        if st.button("✖️ Close"):
+            st.session_state.pop("viewing_attempt_id", None)
+            st.rerun()
 
-    st.subheader("Attempt Detail")
-    st.write(f"**Topic:** {detail['topic_name']}")
-    st.write(f"**Question:** {detail['question_text']}")
-    st.write(f"**Answer:** {detail['answer_text']}")
-    st.metric("Overall Score", f"{detail['overall_score']}/100" if detail['overall_score'] is not None else "—")
-
-    if detail.get("dimension_scores"):
-        cols = st.columns(len(detail["dimension_scores"]))
-        for col, dim in zip(cols, detail["dimension_scores"]):
-            with col:
-                st.metric(dim["dimension"].capitalize(), f"{dim['score']}/100")
-
-    if detail.get("feedback"):
-        with st.expander("Full Feedback"):
-            st.json(detail["feedback"])
-
-    if st.button("Close Detail"):
-        del st.session_state["viewing_attempt_id"]
-        st.rerun()
+    # Fetch full attempt data using the saved attempt_id
+    attempt_id = st.session_state["viewing_attempt_id"]
+    with st.spinner("Loading attempt details..."):
+        try:
+            detail = get_attempt_detail(attempt_id)
+            render_evaluation_result(
+                overall_score=detail["overall_score"],
+                dimension_scores=detail["dimension_scores"],
+                feedback=detail["feedback"],
+                question_text=detail["question_text"],
+                answer_text=detail["answer_text"],
+                answer_mode=detail["answer_mode"],
+            )
+        except Exception as e:
+            st.error(f"Failed to load attempt details: {e}")
