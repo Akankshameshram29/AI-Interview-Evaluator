@@ -1,12 +1,16 @@
 import streamlit as st
+from components.sidebar import render_sidebar_identity
 from services.auth import require_login
 from services.api_client import get_topics, get_questions
 from services.api_client import submit_evaluation, transcribe_audio
+from components.evaluation_display import render_evaluation_result
 
 
 require_login()
+render_sidebar_identity()
 
 st.title("Practice")
+
 
 def on_topic_change():
     """Clears answers, transcripts, and prior evaluations when topic changes."""
@@ -21,10 +25,16 @@ def on_topic_change():
     ]:
         st.session_state.pop(key, None)
 
+
 # --- Topic selection ---
 topics = get_topics()
 topic_names = [t["name"] for t in topics]
-selected_name = st.selectbox("Select a topic", topic_names)
+
+selected_name = st.selectbox(
+    "Select a topic",
+    topic_names,
+    on_change=on_topic_change,
+)
 selected_topic = next(t for t in topics if t["name"] == selected_name)
 
 st.caption(selected_topic["description"])
@@ -32,8 +42,6 @@ st.caption(selected_topic["description"])
 # --- Suggested questions ---
 st.subheader("Suggested Questions")
 questions = get_questions(selected_topic["id"])
-
-selected_question_text = None
 
 for q in questions:
     with st.container(border=True):
@@ -58,7 +66,7 @@ custom_question = st.text_area(
 if st.button("Use custom question"):
     if custom_question.strip():
         st.session_state["selected_question"] = custom_question.strip()
-        st.session_state["expected_concepts"] = None  # will be derived Day 6
+        st.session_state["expected_concepts"] = None
         st.session_state["question_source"] = "custom"
         st.session_state.pop("last_evaluation", None)
     else:
@@ -72,10 +80,9 @@ if "selected_question" in st.session_state:
 else:
     st.info("Pick a suggested question or write your own to continue.")
 
-
-
 st.divider()
 
+# --- Answer Input & Evaluation ---
 if "selected_question" in st.session_state:
     st.subheader("Your Answer")
 
@@ -86,11 +93,12 @@ if "selected_question" in st.session_state:
         key="answer_mode_selection",
     )
 
+    answer_text = ""
+
     if answer_mode == "Voice":
         st.caption("Recording will be capped at 5 minutes.")
 
-        audio_value = st.audio_input("Record your answer")
-
+        audio_value = st.audio_input("Record your answer (click the microphone icon to start)")
         if audio_value is not None:
             if st.session_state.get("last_audio_id") != id(audio_value):
                 with st.spinner("Transcribing your answer..."):
@@ -98,9 +106,8 @@ if "selected_question" in st.session_state:
                         audio_bytes = audio_value.read()
                         result = transcribe_audio(audio_bytes)
 
-                        # Check if API returned an error string or empty transcript
                         if isinstance(result, dict) and result.get("transcript", "").strip():
-                            st.session_state["transcription_id"] = result["transcription_id"]
+                            st.session_state["transcription_id"] = result.get("transcription_id")
                             st.session_state["transcript_text"] = result["transcript"]
                             st.session_state["last_audio_id"] = id(audio_value)
                         else:
@@ -109,7 +116,6 @@ if "selected_question" in st.session_state:
                                 st.session_state.pop(key, None)
 
                     except Exception as e:
-                        # Display clear error message when FastAPI throws a 422 (silence) or 400
                         err_msg = str(e)
                         if "422" in err_msg or "No speech detected" in err_msg:
                             st.warning("⚠️ No clear speech detected in your recording. Please check your mic and try again.")
@@ -136,35 +142,39 @@ if "selected_question" in st.session_state:
 
         answer_text = st.session_state.get("transcript_text", "")
 
-    else:
-        answer_text = st.text_area("Type your answer here", height=200, key="answer_text_input")
-        # Clear any leftover voice state when switching back to Text
-        for key in ["transcription_id", "transcript_text", "last_audio_id"]:
-            st.session_state.pop(key, None)
+    else:  # Text Mode
+        answer_text = st.text_area("Type your answer here", height=200, key="text_answer_input")
 
+    # Unified Evaluation Trigger
     evaluate_clicked = st.button(
         "Evaluate Answer",
         disabled=not answer_text.strip(),
+        use_container_width=True,
     )
 
     if evaluate_clicked:
-        with st.spinner("Evaluating your answer..."):
-            result = submit_evaluation(
-                topic_id=selected_topic["id"],
-                question_text=st.session_state["selected_question"],
-                answer_text=answer_text.strip(),
-                answer_mode="voice" if answer_mode == "Voice" else "text",
-                source=st.session_state.get("question_source", "custom"),
-                transcription_id=st.session_state.get("transcription_id"),
-            )
-        st.session_state["last_evaluation"] = result
-        st.success("Evaluation complete!")
-        # Clear temporary voice/text state now that the attempt is finalized
-        for key in ["transcription_id", "transcript_text", "last_audio_id"]:
-            st.session_state.pop(key, None)
+        with st.status("Evaluating your answer...", expanded=True) as status:
+            try:
+                eval_result = submit_evaluation(
+                    topic_id=selected_topic["id"],
+                    question_text=st.session_state["selected_question"],
+                    answer_text=answer_text.strip(),
+                    answer_mode="voice" if answer_mode == "Voice" else "text",
+                    source=st.session_state.get("question_source", "custom"),
+                    transcription_id=st.session_state.get("transcription_id"),
+                )
+                st.session_state["last_evaluation"] = eval_result
+                status.update(label="Evaluation complete!", state="complete", expanded=False)
 
-from components.evaluation_display import render_evaluation_result
+                # Clear voice recording session state after successful submission
+                for key in ["transcription_id", "transcript_text", "last_audio_id"]:
+                    st.session_state.pop(key, None)
 
+            except Exception as e:
+                status.update(label="Evaluation failed!", state="error", expanded=True)
+                st.error(f"Failed to submit evaluation: {e}")
+
+# --- Results Section ---
 if "last_evaluation" in st.session_state:
     result = st.session_state["last_evaluation"]
     st.divider()

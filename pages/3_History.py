@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
+from components.sidebar import render_sidebar_identity
 from services.auth import require_login
 from services.api_client import get_attempts, get_attempt_detail
 
 require_login()
+render_sidebar_identity()
 st.title("History")
 
 attempts = get_attempts()
