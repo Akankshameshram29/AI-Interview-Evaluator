@@ -1,7 +1,11 @@
 import requests
 from services.auth import get_token
 
-BASE_URL = "http://localhost:8000"
+import os
+
+BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+if not BASE_URL.startswith("http"):
+    BASE_URL = f"https://{BASE_URL}"
 DEFAULT_TIMEOUT = 30  # seconds
 
 

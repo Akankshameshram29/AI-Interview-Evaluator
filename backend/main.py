@@ -28,3 +28,18 @@ app.include_router(progress.router)
 @app.get("/hello")
 def hello():
     return {"message": "Hello from FastAPI"}
+
+
+@app.get("/")
+def read_root():
+    return {"status": "Backend running on Vercel!"}
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # fine for this project's scope; tighten to your exact frontend URL later if needed
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
